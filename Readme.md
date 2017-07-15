@@ -14,12 +14,9 @@ TLSproxy intends to solve a basic use-case: when you need to secure a single web
 
 # Binaries
 
-You can download binaries for
+[You can download binaries for Linux-amd64 and OSX-amd64](https://github.com/chrisDeFouRire/tlsproxy/releases)
 
-- (linux amd64)[] (SHA1 `b72761ab9bc10741eb78cd32c031d4e82d24b76d`)
-- (osx amd64)[] (SHA1 `6c94a32e7fbccf7e6b19c0851fbddeef404c56e2`)
-
-Or build TLSproxy yourself from the Go sources.
+Or build TLSproxy yourself from the Go source code.
 
 # Howto
 
@@ -44,7 +41,8 @@ Also, there's a possibility of DoS if an attacker sends SNI requests forcing TLS
 # License etc.
 
 Do whatever you want with TLSproxy but assume responsibility for everything,
-or hire me (https://hire.chris-hartwig.com) if you need professional support.
+or [hire me if you need professional support](https://hire.chris-hartwig.com).
 
 Make a BTC donation to say "Thanks" :-)
+
 ![1A4ZNLXBYP8m1HL7RsCwHDU8Thuhx6YXcQ`](./BTCtlsproxy.png)
