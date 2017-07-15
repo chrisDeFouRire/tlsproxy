@@ -1,9 +1,5 @@
 package: gitlab.com/ChrisHartwig/TLSProxy
 import:
-- package: github.com/prometheus/client_golang
-  version: ^0.8.0
-  subpackages:
-  - prometheus/promhttp
 - package: golang.org/x/crypto
   subpackages:
   - acme/autocert
