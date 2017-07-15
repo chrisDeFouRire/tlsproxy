@@ -34,7 +34,7 @@ You must run TLSproxy as root, or set capabilities to allow it to bind to port 4
 setcap 'cap_net_bind_service=+ep' /path/to/TLSproxy
 ```
 
-Because TLSproxy is a TCP level proxy, your webserver can't determine the client's IP address anymore. TLSproxy is **not** an HTTP proxy.
+Because TLSproxy is a TCP level proxy, your webserver can't determine the client's IP address anymore. TLSproxy is **not** a full-featured HTTP proxy.
 
 Also, there's a possibility of DoS if an attacker sends SNI requests forcing TLSproxy to request many certificates (cf. Let's Encrypt rate limiting).
 
@@ -46,4 +46,4 @@ You can [hire me if you need professional support](https://hire.chris-hartwig.co
 
 Make a Bitcoin donation to say "Thanks" :-)
 
-![1A4ZNLXBYP8m1HL7RsCwHDU8Thuhx6YXcQ`](./BTCtlsproxy.png)
+![1A4ZNLXBYP8m1HL7RsCwHDU8Thuhx6YXcQ](./BTCtlsproxy.png)
