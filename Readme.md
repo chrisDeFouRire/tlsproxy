@@ -40,9 +40,10 @@ Also, there's a possibility of DoS if an attacker sends SNI requests forcing TLS
 
 # License etc.
 
-Do whatever you want with TLSproxy but assume responsibility for everything,
-or [hire me if you need professional support](https://hire.chris-hartwig.com).
+You can do whatever you want with TLSproxy but you must assume responsibility for everything.
 
-Make a BTC donation to say "Thanks" :-)
+You can [hire me if you need professional support](https://hire.chris-hartwig.com).
+
+Make a Bitcoin donation to say "Thanks" :-)
 
 ![1A4ZNLXBYP8m1HL7RsCwHDU8Thuhx6YXcQ`](./BTCtlsproxy.png)

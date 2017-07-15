@@ -8,14 +8,6 @@ import (
 	"golang.org/x/crypto/acme/autocert"
 )
 
-var (
-	// Tag is set by Gitlab's CI build process
-	Tag string
-
-	// Build is set by Gitlab's CI build process
-	Build string
-)
-
 func main() {
 
 	log.SetFlags(log.LUTC | log.LstdFlags)
