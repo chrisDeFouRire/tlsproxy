@@ -8,6 +8,13 @@ import (
 	"golang.org/x/crypto/acme/autocert"
 )
 
+var (
+	// Tag is set by Gitlab's CI build process
+	Tag string
+	// Build is set by Gitlab's CI build process
+	Build string
+)
+
 func main() {
 
 	log.SetFlags(log.LUTC | log.LstdFlags)
@@ -15,7 +22,7 @@ func main() {
 	var email = flag.String("email", "", "email for let's encrypt account")
 
 	flag.Parse()
-
+	log.Printf("TLS proxy %s %s", Build, Tag)
 	log.Print("Starting TLS proxy, on 0.0.0.0:443")
 	certManager := autocert.Manager{
 		Prompt:     autocert.AcceptTOS,
