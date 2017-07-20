@@ -71,6 +71,6 @@ func main() {
 			log.Println(err)
 			continue
 		}
-		go forward(conn)
+		go forward(*backend, conn)
 	}
 }
