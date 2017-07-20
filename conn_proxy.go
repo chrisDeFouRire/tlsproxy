@@ -11,6 +11,7 @@ func forward(conn net.Conn) {
 	if err != nil {
 		log.Printf("Dial failed: %v", err)
 		conn.Close()
+		return
 	}
 	go func() {
 		defer client.Close()

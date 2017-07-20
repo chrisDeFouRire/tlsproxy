@@ -21,15 +21,30 @@ func main() {
 	log.SetFlags(log.LUTC | log.LstdFlags)
 
 	var email = flag.String("email", "", "email for let's encrypt account")
+	var listen = flag.String("listen", "0.0.0.0:443", "address to listen to")
+	var backend = flag.String("backend", "localhost:80", "address to send traffic to")
 
 	flag.Parse()
 
 	if envEmail := os.Getenv("EMAIL"); envEmail != "" {
 		email = &envEmail
 	}
+	if envListen := os.Getenv("LISTEN"); envListen != "" {
+		listen = &envListen
+	}
+	if envBackend := os.Getenv("BACKEND"); envBackend != "" {
+		backend = &envBackend
+	}
+
+	if *email == "" {
+		log.Fatal("You must specify an email sent to LetsEncrypt")
+	}
 
 	log.Printf("TLS proxy %s %s", Build, Tag)
-	log.Print("Starting TLS proxy, on 0.0.0.0:443")
+	log.Print("Starting TLS proxy, on ", *listen)
+	log.Print("Forwarding to ", *backend)
+	log.Print("Using email: ", *email)
+
 	certManager := autocert.Manager{
 		Prompt:     autocert.AcceptTOS,
 		HostPolicy: nil,
@@ -38,9 +53,11 @@ func main() {
 		ForceRSA:   true,
 	}
 
-	tlsconfig := &tls.Config{GetCertificate: certManager.GetCertificate}
+	tlsconfig := &tls.Config{
+		GetCertificate: certManager.GetCertificate,
+	}
 
-	listener, err := tls.Listen("tcp", ":443", tlsconfig)
+	listener, err := tls.Listen("tcp", *listen, tlsconfig)
 	if err != nil {
 		log.Println(err)
 		return
