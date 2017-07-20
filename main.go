@@ -82,15 +82,14 @@ func main() {
 		u, _ := url.Parse(*backend)
 
 		director := func(req *http.Request) {
-			req.URL.Scheme = "http://"
-			req.URL.Host = req.Header.Get("Host")
+			req.URL.Scheme = "http:"
+			req.URL.Host = req.Host
 			req.URL.Path = u.Path + "/" + req.URL.Path
 			if _, ok := req.Header["User-Agent"]; !ok {
 				// explicitly disable User-Agent so it's not set to default value
 				req.Header.Set("User-Agent", "")
 			}
 			log.Print(req)
-			log.Print(req.Header)
 		}
 		proxy := &httputil.ReverseProxy{Director: director}
 
