@@ -4,6 +4,7 @@ import (
 	"crypto/tls"
 	"flag"
 	"log"
+	"os"
 
 	"golang.org/x/crypto/acme/autocert"
 )
@@ -22,6 +23,11 @@ func main() {
 	var email = flag.String("email", "", "email for let's encrypt account")
 
 	flag.Parse()
+
+	if envEmail := os.Getenv("EMAIL"); envEmail != "" {
+		email = &envEmail
+	}
+
 	log.Printf("TLS proxy %s %s", Build, Tag)
 	log.Print("Starting TLS proxy, on 0.0.0.0:443")
 	certManager := autocert.Manager{
