@@ -82,7 +82,7 @@ func main() {
 		u, _ := url.Parse(*backend)
 
 		director := func(req *http.Request) {
-			req.URL.Scheme = "http:"
+			req.URL.Scheme = "http"
 			req.URL.Host = req.Host
 			req.URL.Path = u.Path + "/" + req.URL.Path
 			if _, ok := req.Header["User-Agent"]; !ok {
