@@ -4,7 +4,11 @@ import (
 	"crypto/tls"
 	"flag"
 	"log"
+	"net/http"
+	"net/http/httputil"
 	"os"
+
+	"net/url"
 
 	"golang.org/x/crypto/acme/autocert"
 )
@@ -23,6 +27,7 @@ func main() {
 	var email = flag.String("email", "", "email for let's encrypt account")
 	var listen = flag.String("listen", "0.0.0.0:443", "address to listen to")
 	var backend = flag.String("backend", "localhost:80", "address to send traffic to")
+	var httpmode = flag.Bool("http", false, "if true, use HTTP proxy instead of TCP proxy")
 
 	flag.Parse()
 
@@ -34,6 +39,9 @@ func main() {
 	}
 	if envBackend := os.Getenv("BACKEND"); envBackend != "" {
 		backend = &envBackend
+	}
+	if envHttpmode := os.Getenv("HTTP"); envHttpmode == "true" {
+		*httpmode = true
 	}
 
 	if *email == "" {
@@ -55,7 +63,11 @@ func main() {
 
 	tlsconfig := &tls.Config{
 		GetCertificate: certManager.GetCertificate,
-		NextProtos:     []string{"http/1.1"},
+	}
+
+	// if not in http proxy mode, assume http/1.1 backend
+	if !*httpmode {
+		tlsconfig.NextProtos = []string{"http/1.1"}
 	}
 
 	listener, err := tls.Listen("tcp", *listen, tlsconfig)
@@ -64,6 +76,31 @@ func main() {
 		return
 	}
 	defer listener.Close()
+
+	if *httpmode { // HTTP proxy mode
+
+		u, _ := url.Parse(*backend)
+
+		director := func(req *http.Request) {
+			req.URL.Scheme = u.Scheme
+			//req.URL.Host = u.Host
+			req.URL.Path = u.Path + "/" + req.URL.Path
+			if _, ok := req.Header["User-Agent"]; !ok {
+				// explicitly disable User-Agent so it's not set to default value
+				req.Header.Set("User-Agent", "")
+			}
+		}
+		proxy := &httputil.ReverseProxy{Director: director}
+
+		fun := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			proxy.ServeHTTP(w, r)
+		})
+
+		log.Fatal(http.Serve(listener, fun))
+		return
+	}
+
+	// TCP mode, accept a connection and forward it
 
 	for {
 		conn, err := listener.Accept()
