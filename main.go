@@ -55,6 +55,7 @@ func main() {
 
 	tlsconfig := &tls.Config{
 		GetCertificate: certManager.GetCertificate,
+		NextProtos:     []string{"http/1.1"},
 	}
 
 	listener, err := tls.Listen("tcp", *listen, tlsconfig)
