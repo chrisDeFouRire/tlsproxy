@@ -16,4 +16,7 @@ tlsproxy-build:
     - curl https://glide.sh/get | sh
     - glide install
     - go build -ldflags "-X main.Build=$CI_PIPELINE_ID -X main.Tag=$CI_BUILD_TAG"
-  
+  artifacts:
+    paths:
+    - TLSProxy
+    expire_in: 1 week
