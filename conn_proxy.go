@@ -6,11 +6,12 @@ import (
 	"net"
 )
 
-func forward(conn net.Conn) {
-	client, err := net.Dial("tcp", "localhost:80")
+func forward(backend string, conn net.Conn) {
+	client, err := net.Dial("tcp", backend)
 	if err != nil {
 		log.Printf("Dial failed: %v", err)
 		conn.Close()
+		return
 	}
 	go func() {
 		defer client.Close()
