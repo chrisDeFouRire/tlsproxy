@@ -101,7 +101,7 @@ func main() {
 				// explicitly disable User-Agent so it's not set to default value
 				req.Header.Set("User-Agent", "")
 			}
-			log.Print(req)
+			req.Header.Set("X-Forwarded-Proto", "https")
 		}
 		proxy := &httputil.ReverseProxy{Director: director}
 
