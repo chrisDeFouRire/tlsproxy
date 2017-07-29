@@ -58,7 +58,7 @@ func main() {
 	log.Print("Using email: ", *email)
 	log.Print("Using HTTP proxying: ", *httpmode)
 	if !*httpmode {
-		log.Print("Using PROXY protocol", *proxyproto)
+		log.Print("Using PROXY protocol: ", *proxyproto)
 	}
 
 	certManager := autocert.Manager{

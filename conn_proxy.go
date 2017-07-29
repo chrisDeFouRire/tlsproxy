@@ -25,7 +25,7 @@ func forward(backendHostport string, conn net.Conn, proxyproto bool) {
 		return
 	}
 	if proxyproto {
-		tcpversion := "tcp4"
+		tcpversion := "TCP4"
 		srcaddr, srcport, srcerr := split(conn.RemoteAddr())
 		dstaddr, dstport, _ := split(conn.LocalAddr())
 		if srcerr != nil { // source address is not tcp4
