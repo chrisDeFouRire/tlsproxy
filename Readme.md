@@ -33,7 +33,8 @@ You can use environment variables or flags...
 - `-email=<email>` or `EMAIL`: the email to use when registering new certs with LetsEncrypt
 - `-listen=host:port` or `LISTEN`: the host and port where TLSproxy will listen (defaults to 0.0.0.0:443)
 - `-backend=http://host:port` or `BACKEND`: the address of the backend to forward to (defaults to localhost:80) 
-- `-http=true` or `HTTP`: set to true to use HTTP proxying instead of TCP proxying (defaults to false)
+- `-http=true` or `HTTP=true`: set to true to use HTTP proxying instead of TCP proxying (defaults to false)
+- `-proxy=true` or `PROXY=true`: set to true to allow TCP proxying with the PROXY protocol
 
 # Run with Docker
 
