@@ -28,6 +28,7 @@ func main() {
 	var listen = flag.String("listen", "0.0.0.0:443", "address to listen to")
 	var backend = flag.String("backend", "localhost:80", "address to send traffic to")
 	var httpmode = flag.Bool("http", false, "if true, use HTTP proxy instead of TCP proxy")
+	var proxyproto = flag.Bool("proxy", false, "if true, use the PROXY protocol for TCP proxying")
 
 	flag.Parse()
 
@@ -43,6 +44,9 @@ func main() {
 	if envHttpmode := os.Getenv("HTTP"); envHttpmode == "true" {
 		*httpmode = true
 	}
+	if envProxyproto := os.Getenv("PROXY"); envProxyproto == "true" {
+		*proxyproto = true
+	}
 
 	if *email == "" {
 		log.Fatal("You must specify an email sent to LetsEncrypt")
@@ -52,6 +56,10 @@ func main() {
 	log.Print("Starting TLS proxy, on ", *listen)
 	log.Print("Forwarding to ", *backend)
 	log.Print("Using email: ", *email)
+	log.Print("Using HTTP proxying: ", *httpmode)
+	if !*httpmode {
+		log.Print("Using PROXY protocol", *proxyproto)
+	}
 
 	certManager := autocert.Manager{
 		Prompt:     autocert.AcceptTOS,
@@ -122,6 +130,6 @@ func main() {
 			log.Println(err)
 			continue
 		}
-		go forward(*backend, conn)
+		go forward(*backend, conn, *proxyproto)
 	}
 }
