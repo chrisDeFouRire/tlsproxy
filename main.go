@@ -73,6 +73,7 @@ func main() {
 		GetCertificate:           certManager.GetCertificate,
 		PreferServerCipherSuites: true,
 		CurvePreferences:         []tls.CurveID{tls.CurveP521, tls.CurveP384, tls.CurveP256},
+		/* Specifying these cipherSuites breaks TLSproxy, but only for getting new certs, existing certs keep working
 		CipherSuites: []uint16{
 			tls.TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384,
 			tls.TLS_ECDHE_RSA_WITH_AES_256_CBC_SHA,
@@ -82,7 +83,7 @@ func main() {
 			tls.TLS_RSA_WITH_AES_256_CBC_SHA,
 			tls.TLS_RSA_WITH_AES_128_CBC_SHA,
 			tls.TLS_RSA_WITH_AES_128_GCM_SHA256,
-		},
+		},*/
 	}
 
 	// if not in http proxy mode, assume http/1.1 backend

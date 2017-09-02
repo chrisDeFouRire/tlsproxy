@@ -73,7 +73,6 @@ Next on the roadmap:
 - use stores for certificates (Vault? Redis? other?)
 - allow reusing existing certs (yet allow LE certs if needed)
 - allow restricting domain issuing (regexp? list? webhook?)
-- build the [tlsproxy.com](https://tlsproxy.com) website... It's empty right now, but with TLSproxy of course
 - add prometheus monitoring
 - optimize and benchmark
 - and more... Tell us what you need! 
