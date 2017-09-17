@@ -36,6 +36,31 @@ You can use environment variables or flags...
 - `-http=true` or `HTTP=true`: set to true to use HTTP proxying instead of TCP proxying (defaults to false)
 - `-proxy=true` or `PROXY=true`: set to true to allow TCP proxying with the PROXY protocol
 
+### Startup script
+
+You can create a startup script for TLSproxy to be started automatically at boot and restarted in case of crash.
+Here are instructions on how to do it for `systemd` (Debian 7-8, Ubuntu 15.04+, CentOS 7):
+
+1. Download the [latest release](https://github.com/chrisDeFouRire/tlsproxy/releases/latest)
+2. Make it executable: `chmod +x TLSproxy.linux.amd64`
+3. Move it where you want: `sudo mv TLSproxy.linux.amd64 /usr/local/bin/tlsproxy`
+4. Create the systemd file: `sudo vim /etc/systemd/system/tlsproxy.service`
+5. Paste the following config (add the command line options here, like `-email`):
+```
+[Unit]
+Description=TLS Proxy
+After=network-online.target
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/tlsproxy
+Restart=on-failure
+[Install]
+WantedBy=multi-user.target
+```
+6. Enable the service to be started on boot: `sudo systemctl enable tlsproxy`
+7. You can also start the service now by running: `sudo systemctl start tlsproxy`
+8. And you can check the current status by running: `sudo systemctl status tlsproxy`
+
 # Run with Docker
 
 It's even easier to run TLSproxy in docker!
