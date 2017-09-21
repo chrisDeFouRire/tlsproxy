@@ -29,6 +29,7 @@ func main() {
 	var backend = flag.String("backend", "localhost:80", "address to send traffic to")
 	var httpmode = flag.Bool("http", false, "if true, use HTTP proxy instead of TCP proxy")
 	var proxyproto = flag.Bool("proxy", false, "if true, use the PROXY protocol for TCP proxying")
+	var debug = flag.Bool("debug", false, "more verbose debug")
 
 	flag.Parse()
 
@@ -47,6 +48,9 @@ func main() {
 	if envProxyproto := os.Getenv("PROXY"); envProxyproto == "true" {
 		*proxyproto = true
 	}
+	if envDebug := os.Getenv("DEBUG"); envDebug == "true" {
+		*debug = true
+	}
 
 	if *email == "" {
 		log.Fatal("You must specify an email sent to LetsEncrypt")
@@ -60,20 +64,38 @@ func main() {
 	if !*httpmode {
 		log.Print("Using PROXY protocol: ", *proxyproto)
 	}
+	log.Print("Using debug mode: ", *debug)
+
+	var cache autocert.Cache = autocert.DirCache("certs")
+	if *debug {
+		cache = newDebugCache(cache)
+	}
 
 	certManager := autocert.Manager{
 		Prompt:     autocert.AcceptTOS,
 		HostPolicy: nil,
-		Cache:      autocert.DirCache("certs"),
+		Cache:      cache,
 		Email:      *email,
 		ForceRSA:   true,
 	}
 
+	getCertificate := certManager.GetCertificate
+	if *debug {
+		getCertificate = func(hello *tls.ClientHelloInfo) (*tls.Certificate, error) {
+			res, err := certManager.GetCertificate(hello)
+			log.Printf("Getting cert for %s", hello.ServerName)
+			if err != nil {
+				log.Print("GetCertificate debug: ", err)
+			}
+			return res, err
+		}
+	}
+
 	tlsconfig := &tls.Config{
-		GetCertificate:           certManager.GetCertificate,
+		GetCertificate:           getCertificate,
 		PreferServerCipherSuites: true,
-		CurvePreferences:         []tls.CurveID{tls.CurveP521, tls.CurveP384, tls.CurveP256},
-		/* Specifying these cipherSuites breaks TLSproxy, but only for getting new certs, existing certs keep working
+		/*CurvePreferences:         []tls.CurveID{tls.CurveP521, tls.CurveP384, tls.CurveP256},
+		 Specifying these cipherSuites breaks TLSproxy, but only for getting new certs, existing certs keep working
 		CipherSuites: []uint16{
 			tls.TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384,
 			tls.TLS_ECDHE_RSA_WITH_AES_256_CBC_SHA,
