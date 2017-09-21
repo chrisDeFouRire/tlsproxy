@@ -1,5 +1,0 @@
-package: gitlab.com/ChrisHartwig/TLSProxy
-import:
-- package: golang.org/x/crypto
-  subpackages:
-  - acme/autocert
