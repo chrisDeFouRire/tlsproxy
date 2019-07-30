@@ -14,9 +14,7 @@ TLSproxy intends to solve a basic use-case: when you need to secure a single web
 
 # Binaries
 
-[You can download binaries for Linux-amd64 and OSX-amd64](https://github.com/chrisDeFouRire/tlsproxy/releases)
-
-Or build TLSproxy yourself from the Go source code.
+You'll have to build TLSproxy yourself from the Go source code.
 
 # Howto
 

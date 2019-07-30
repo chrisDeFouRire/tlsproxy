@@ -10,6 +10,7 @@ import (
 
 	"net/url"
 
+	"golang.org/x/crypto/acme"
 	"golang.org/x/crypto/acme/autocert"
 )
 
@@ -106,11 +107,12 @@ func main() {
 			tls.TLS_RSA_WITH_AES_128_CBC_SHA,
 			tls.TLS_RSA_WITH_AES_128_GCM_SHA256,
 		},*/
+		NextProtos: []string{acme.ALPNProto, "h2"},
 	}
 
 	// if not in http proxy mode, assume http/1.1 backend
 	if !*httpmode {
-		tlsconfig.NextProtos = []string{"http/1.1"}
+		tlsconfig.NextProtos = []string{acme.ALPNProto, "http/1.1"}
 	}
 
 	listener, err := tls.Listen("tcp", *listen, tlsconfig)
