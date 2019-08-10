@@ -97,6 +97,7 @@ func main() {
 	tlsconfig := &tls.Config{
 		GetCertificate:           getCertificate,
 		PreferServerCipherSuites: true,
+		MinVersion: tls.VersionTLS12,
 		/*CurvePreferences:         []tls.CurveID{tls.CurveP521, tls.CurveP384, tls.CurveP256},
 		 Specifying these cipherSuites breaks TLSproxy, but only for getting new certs, existing certs keep working
 		CipherSuites: []uint16{
