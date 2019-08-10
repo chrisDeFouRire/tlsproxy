@@ -7,6 +7,8 @@ import (
 	"net/http"
 	"net/http/httputil"
 	"os"
+	"strings"
+	"path"
 
 	"net/url"
 
@@ -20,7 +22,7 @@ var (
 	// Build is set by Gitlab's CI build process
 	Build string
 )
-
+ 
 func main() {
 
 	log.SetFlags(log.LUTC | log.LstdFlags)
@@ -31,7 +33,7 @@ func main() {
 	var httpmode = flag.Bool("http", false, "if true, use HTTP proxy instead of TCP proxy")
 	var proxyproto = flag.Bool("proxy", false, "if true, use the PROXY protocol for TCP proxying")
 	var debug = flag.Bool("debug", false, "more verbose debug")
-
+ 
 	flag.Parse()
 
 	if envEmail := os.Getenv("EMAIL"); envEmail != "" {
@@ -118,18 +120,21 @@ func main() {
 	listener, err := tls.Listen("tcp", *listen, tlsconfig)
 	if err != nil {
 		log.Println(err)
-		return
+		return 
 	}
 	defer listener.Close()
 
 	if *httpmode { // HTTP proxy mode
 
 		u, _ := url.Parse(*backend)
+		if !strings.HasSuffix(u.Path, "/") {
+			u.Path = u.Path + "/"
+		}
 
 		director := func(req *http.Request) {
-			req.URL.Scheme = "http"
-			req.URL.Host = req.Host
-			req.URL.Path = u.Path + "/" + req.URL.Path
+			req.URL.Scheme = u.Scheme
+			req.URL.Host = u.Hostname()
+			req.URL.Path = path.Join(u.Path , req.URL.Path)
 			if _, ok := req.Header["User-Agent"]; !ok {
 				// explicitly disable User-Agent so it's not set to default value
 				req.Header.Set("User-Agent", "")
