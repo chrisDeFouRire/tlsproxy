@@ -98,18 +98,6 @@ func main() {
 		GetCertificate:           getCertificate,
 		PreferServerCipherSuites: true,
 		MinVersion: tls.VersionTLS12,
-		/*CurvePreferences:         []tls.CurveID{tls.CurveP521, tls.CurveP384, tls.CurveP256},
-		 Specifying these cipherSuites breaks TLSproxy, but only for getting new certs, existing certs keep working
-		CipherSuites: []uint16{
-			tls.TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384,
-			tls.TLS_ECDHE_RSA_WITH_AES_256_CBC_SHA,
-			tls.TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,
-			tls.TLS_ECDHE_RSA_WITH_AES_128_CBC_SHA,
-			tls.TLS_RSA_WITH_AES_256_GCM_SHA384,
-			tls.TLS_RSA_WITH_AES_256_CBC_SHA,
-			tls.TLS_RSA_WITH_AES_128_CBC_SHA,
-			tls.TLS_RSA_WITH_AES_128_GCM_SHA256,
-		},*/
 		NextProtos: []string{acme.ALPNProto, "h2"},
 	}
 
@@ -134,7 +122,7 @@ func main() {
 
 		director := func(req *http.Request) {
 			req.URL.Scheme = u.Scheme
-			req.URL.Host = u.Hostname()
+			req.URL.Host = u.Host
 			req.URL.Path = path.Join(u.Path , req.URL.Path)
 			if _, ok := req.Header["User-Agent"]; !ok {
 				// explicitly disable User-Agent so it's not set to default value
