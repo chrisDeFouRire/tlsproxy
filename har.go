@@ -12,33 +12,48 @@ import (
 	"time"
 )
 
+const (
+	startingEntrySize = 1000
+	captureContent    = false
+)
+
+// ResponseWriterProxy is a proxy to intercept http.ResponseWriter method calls
 type ResponseWriterProxy struct {
 	under    http.ResponseWriter
 	response HarResponse
 	buffer   bytes.Buffer
 }
 
+// NewResponseWriterProxy creates a new ResponseWriterProxy
 func NewResponseWriterProxy(r http.ResponseWriter) *ResponseWriterProxy {
 	return &ResponseWriterProxy{under: r}
 }
+
+// Header from http.ResponseWriter interface
 func (rwp *ResponseWriterProxy) Header() http.Header {
 	return rwp.under.Header()
 }
+
+// Wrote from from http.ResponseWriter interface
 func (rwp *ResponseWriterProxy) Write(bs []byte) (int, error) {
 	rwp.buffer.Write(bs)
 	return rwp.under.Write(bs)
 }
+
+// WriteHeader from http.ResponseWriter interface
 func (rwp *ResponseWriterProxy) WriteHeader(statusCode int) {
 	rwp.response.Status = statusCode
 	rwp.response.Headers = parseStringArrMap(rwp.under.Header())
 	rwp.under.WriteHeader(statusCode)
 }
+
+// GetResponse returns a HarResponse after the response was written by the handler
 func (rwp *ResponseWriterProxy) GetResponse() *HarResponse {
 	var bs []byte
 	rwp.response.Content = &HarContent{}
 
 	encoding := rwp.under.Header()["Content-Encoding"]
-	if encoding != nil && len(encoding)>0 {
+	if encoding != nil && len(encoding) > 0 {
 		rwp.response.Content.Encoding = encoding[0]
 		if encoding[0] == "gzip" {
 			gr, _ := gzip.NewReader(&rwp.buffer)
@@ -79,17 +94,18 @@ func fillIPAddress(req *http.Request, harEntry *HarEntry) {
 	}
 }
 
-var startingEntrySize = 1000
-
+// Har represents the json HAR file format
 type Har struct {
 	HarLog HarLog `json:"log"`
 }
 
+// HarCreator is a field of HAR files
 type HarCreator struct {
 	Name    string `json:"name"`
 	Version string `json:"version"`
 }
 
+// HarLog is a field of HAR files
 type HarLog struct {
 	Version string     `json:"version"`
 	Creator HarCreator `json:"creator"`
@@ -99,14 +115,14 @@ type HarLog struct {
 }
 
 func newHarLog() *HarLog {
-	harLog := HarLog{
+	harLog := &HarLog{
 		Version: "1.2",
 		Creator: HarCreator{Name: "TLSProxy", Version: "2.8"},
 		Browser: "",
 		Pages:   make([]HarPage, 0, 10),
 		Entries: makeNewEntries(),
 	}
-	return &harLog
+	return harLog
 }
 
 func (harLog *HarLog) addEntry(entry ...HarEntry) {
@@ -129,6 +145,7 @@ func makeNewEntries() []HarEntry {
 	return make([]HarEntry, 0, startingEntrySize)
 }
 
+// HarPage is a field of HAR files
 type HarPage struct {
 	ID              string         `json:"id"`
 	StartedDateTime time.Time      `json:"startedDateTime"`
@@ -136,6 +153,7 @@ type HarPage struct {
 	PageTimings     HarPageTimings `json:"pageTimings"`
 }
 
+// HarEntry is a field of HAR files
 type HarEntry struct {
 	PageRef         string       `json:"pageRef"`
 	StartedDateTime time.Time    `json:"startedDateTime"`
@@ -147,6 +165,7 @@ type HarEntry struct {
 	Connection      string       `json:"connection"`
 }
 
+// HarRequest is a field of HAR files
 type HarRequest struct {
 	Method      string             `json:"method"`
 	URL         string             `json:"url"`
@@ -158,8 +177,6 @@ type HarRequest struct {
 	BodySize    int64              `json:"bodySize"`
 	HeadersSize int64              `json:"headersSize"`
 }
-
-var captureContent = false
 
 func parseRequest(req *http.Request) *HarRequest {
 	if req == nil {
@@ -260,6 +277,7 @@ func parseCookies(cookies []*http.Cookie) []HarCookie {
 	return harCookies
 }
 
+// HarResponse is a field of HAR files
 type HarResponse struct {
 	Status      int                `json:"status"`
 	StatusText  string             `json:"statusText"`
@@ -272,58 +290,7 @@ type HarResponse struct {
 	HeadersSize int64              `json:"headersSize"`
 }
 
-func proxyResponseWriter(r *http.ResponseWriter) (http.ResponseWriter, *HarResponse) {
-	value := &HarResponse{}
-
-	return nil, value
-}
-
-func oldParseResponse(resp *http.Response) *HarResponse {
-	if resp == nil {
-		return nil
-	}
-
-	harResponse := HarResponse{
-		Status:      resp.StatusCode,
-		StatusText:  resp.Status,
-		HTTPVersion: resp.Proto,
-		Cookies:     parseCookies(resp.Cookies()),
-		Headers:     parseStringArrMap(resp.Header),
-		RedirectURL: "",
-		BodySize:    resp.ContentLength,
-		HeadersSize: calcHeaderSize(resp.Header),
-	}
-
-	if captureContent {
-		harResponse.Content = parseContent(resp)
-	}
-
-	return &harResponse
-}
-
-func parseContent(resp *http.Response) *HarContent {
-	defer func() {
-		if e := recover(); e != nil {
-			log.Printf("Error parsing response to %v: %v\n", resp.Request.URL, e)
-		}
-	}()
-
-	harContent := new(HarContent)
-	contentType := resp.Header["Content-Type"]
-	if contentType == nil {
-		panic("Missing content type in response")
-	}
-	harContent.MimeType = contentType[0]
-	if resp.ContentLength <= 0 {
-		log.Println("Empty content")
-		return nil
-	}
-
-	body, _ := ioutil.ReadAll(resp.Body)
-	harContent.Text = string(body)
-	return harContent
-}
-
+// HarCookie is a field of HAR files
 type HarCookie struct {
 	Name     string    `json:"name"`
 	Value    string    `json:"value"`
@@ -334,17 +301,20 @@ type HarCookie struct {
 	Secure   bool      `json:"secure"`
 }
 
+// HarNameValuePair is a field of HAR files
 type HarNameValuePair struct {
 	Name  string `json:"name"`
 	Value string `json:"value"`
 }
 
+// HarPostData is a field of HAR files
 type HarPostData struct {
 	MimeType string             `json:"mimeType"`
 	Params   []HarPostDataParam `json:"params"`
 	Text     string             `json:"text"`
 }
 
+// HarPostDataParam is a field of HAR files
 type HarPostDataParam struct {
 	Name        string `json:"name"`
 	Value       string `json:"value"`
@@ -352,6 +322,7 @@ type HarPostDataParam struct {
 	ContentType string `json:"contentType"`
 }
 
+// HarContent is a field of HAR files
 type HarContent struct {
 	Size        int64  `json:"size"`
 	Compression int64  `json:"compression"`
@@ -360,11 +331,13 @@ type HarContent struct {
 	Encoding    string `json:"encoding"`
 }
 
+// HarPageTimings is a field of HAR files
 type HarPageTimings struct {
 	OnContentLoad int64 `json:"onContentLoad"`
 	OnLoad        int64 `json:"onLoad"`
 }
 
+// HarTimings is a field of HAR files
 type HarTimings struct {
 	Blocked int64 `json:"blocked"`
 	DNS     int64 `json:"dns"`
