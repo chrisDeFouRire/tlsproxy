@@ -3,67 +3,53 @@ package main
 import (
 	"crypto/tls"
 	"flag"
+	"encoding/json"
 	"log"
 	"net/http"
 	"net/http/httputil"
 	"os"
-	"strings"
 	"path"
+	"strings"
+	"time"
 
 	"net/url"
 
 	"golang.org/x/crypto/acme"
 	"golang.org/x/crypto/acme/autocert"
+	//"github.com/alecthomas/repr"
 )
 
-var (
-	// Tag is set by Gitlab's CI build process
-	Tag string
-	// Build is set by Gitlab's CI build process
-	Build string
-)
- 
 func main() {
 
 	log.SetFlags(log.LUTC | log.LstdFlags)
 
-	var email = flag.String("email", "", "email for let's encrypt account")
-	var listen = flag.String("listen", "0.0.0.0:443", "address to listen to")
-	var backend = flag.String("backend", "localhost:80", "address to send traffic to")
-	var httpmode = flag.Bool("http", false, "if true, use HTTP proxy instead of TCP proxy")
-	var proxyproto = flag.Bool("proxy", false, "if true, use the PROXY protocol for TCP proxying")
-	var debug = flag.Bool("debug", false, "more verbose debug")
- 
+	var hostname = flag.String("hostname", os.Getenv("HOSTNAME"), "hostname for TLS certificate")
+	var email = flag.String("email", os.Getenv("EMAIL"), "email for let's encrypt account")
+	var listen = flag.String("listen", os.Getenv("LISTEN"), "address to listen to")
+	var backend = flag.String("backend", os.Getenv("BACKEND"), "address to send traffic to")
+	var httpmode = flag.Bool("http", os.Getenv("HTTP") == "true", "if true, use HTTP proxy instead of TCP proxy")
+	var proxyproto = flag.Bool("proxy", os.Getenv("PROXY") == "true", "if true, use the PROXY protocol for TCP proxying")
+	var har = flag.Bool("har", os.Getenv("HAR") == "true", "if true and HTTP mode is used, allow to download an HAR file")
+	var debug = flag.Bool("debug", os.Getenv("DEBUG") == "true", "more verbose debug")
+
 	flag.Parse()
 
-	if envEmail := os.Getenv("EMAIL"); envEmail != "" {
-		email = &envEmail
-	}
-	if envListen := os.Getenv("LISTEN"); envListen != "" {
-		listen = &envListen
-	}
-	if envBackend := os.Getenv("BACKEND"); envBackend != "" {
-		backend = &envBackend
-	}
-	if envHttpmode := os.Getenv("HTTP"); envHttpmode == "true" {
-		*httpmode = true
-	}
-	if envProxyproto := os.Getenv("PROXY"); envProxyproto == "true" {
-		*proxyproto = true
-	}
-	if envDebug := os.Getenv("DEBUG"); envDebug == "true" {
-		*debug = true
+	if *listen == "" {
+		*listen = "0.0.0.0:443"
 	}
 
+	if *backend == "" {
+		log.Fatal("You must specify a backend as a host:port (tcp proxy) or a url (http proxy)")
+	}
 	if *email == "" {
 		log.Fatal("You must specify an email sent to LetsEncrypt")
 	}
 
-	log.Printf("TLS proxy %s %s", Build, Tag)
 	log.Print("Starting TLS proxy, on ", *listen)
 	log.Print("Forwarding to ", *backend)
 	log.Print("Using email: ", *email)
 	log.Print("Using HTTP proxying: ", *httpmode)
+	log.Print("Installing HAR HTTP endpoint: ", *har)
 	if !*httpmode {
 		log.Print("Using PROXY protocol: ", *proxyproto)
 	}
@@ -74,9 +60,14 @@ func main() {
 		cache = newDebugCache(cache)
 	}
 
+	var hostPolicy autocert.HostPolicy
+	if *hostname != "" {
+		hostPolicy = autocert.HostWhitelist(*hostname)
+	}
+
 	certManager := autocert.Manager{
 		Prompt:     autocert.AcceptTOS,
-		HostPolicy: nil,
+		HostPolicy: hostPolicy,
 		Cache:      cache,
 		Email:      *email,
 		ForceRSA:   true,
@@ -97,8 +88,8 @@ func main() {
 	tlsconfig := &tls.Config{
 		GetCertificate:           getCertificate,
 		PreferServerCipherSuites: true,
-		MinVersion: tls.VersionTLS12,
-		NextProtos: []string{acme.ALPNProto, "h2"},
+		MinVersion:               tls.VersionTLS12,
+		NextProtos:               []string{acme.ALPNProto, "h2"},
 	}
 
 	// if not in http proxy mode, assume http/1.1 backend
@@ -109,11 +100,13 @@ func main() {
 	listener, err := tls.Listen("tcp", *listen, tlsconfig)
 	if err != nil {
 		log.Println(err)
-		return 
+		return
 	}
 	defer listener.Close()
 
 	if *httpmode { // HTTP proxy mode
+
+		harLog := newHarLog()
 
 		u, _ := url.Parse(*backend)
 		if !strings.HasSuffix(u.Path, "/") {
@@ -123,7 +116,7 @@ func main() {
 		director := func(req *http.Request) {
 			req.URL.Scheme = u.Scheme
 			req.URL.Host = u.Host
-			req.URL.Path = path.Join(u.Path , req.URL.Path)
+			req.URL.Path = path.Join(u.Path, req.URL.Path)
 			if _, ok := req.Header["User-Agent"]; !ok {
 				// explicitly disable User-Agent so it's not set to default value
 				req.Header.Set("User-Agent", "")
@@ -133,7 +126,38 @@ func main() {
 		proxy := &httputil.ReverseProxy{Director: director}
 
 		fun := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			proxy.ServeHTTP(w, r)
+			if !*har {
+				proxy.ServeHTTP(w, r)
+				return
+			}
+
+			if r.Method == http.MethodGet && r.URL.RequestURI() == "/downloadharfile" {
+				har := Har{}
+				har.HarLog = *harLog		
+				w.Header().Set("Content-Type", "application/json")
+				w.Header().Set("Content-Disposition", "attachment; filename=\"tlsproxy.har\"")
+				w.WriteHeader(http.StatusOK)
+				json.NewEncoder(w).Encode(har)
+				harLog = newHarLog()
+				return
+			}
+
+			harEntry := new(HarEntry)
+			fillIPAddress(r, harEntry)
+			start := time.Now()
+			harReq := parseRequest(r)
+			wp := NewResponseWriterProxy(w)
+
+			proxy.ServeHTTP(wp, r)
+
+			end := time.Now()
+			harRes := wp.GetResponse()
+			harEntry.Request = harReq
+			harEntry.StartedDateTime = start
+			harEntry.Response = harRes
+			harEntry.Time = end.Sub(start).Nanoseconds() / 1e6
+
+			harLog.addEntry(*harEntry)
 		})
 
 		log.Fatal(http.Serve(listener, fun))
