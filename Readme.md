@@ -4,9 +4,9 @@ SSL/TLS is difficult to setup correctly:
 
 - SSL/TLS configuration options are too numerous to cite
 - each web server has its own set of options
-- certificates expire and must be renewed (but see [SSLPing](https://sslping.com) )
+- certificates expire and must be renewed (use [SSLPing](https://sslping.com) to remind you)
 - certs cost money
-- it's too hard to obtain a secure TLS configuration
+- it's too hard to obtain a secure TLS configuration (TLS proxy gets you an A with SSLlab's server test)
 
 TLSproxy makes it trivially simple to secure a web server: it has only one option, to provide your email (sent only to Let's Encrypt).
 
@@ -38,7 +38,7 @@ You'll have to build TLSproxy yourself from the Go source code: I do recommend u
 
 You can use flags or environment variables...
 
-- `-hostname=<host>` or `HOSTNAME`: the hostname used for the tls certificate (if omitted, the server will guess which tls cert it should acquire... which may fail or be abused)
+- `-whitelist=<host>` or `WHITELIST`: a comma separated list of hostnames used for the tls certificate (if omitted, the server will guess which tls cert it should acquire... which may fail or be abused)
 - `-email=<email>` or `EMAIL`: the email to use when registering new certs with LetsEncrypt
 - `-listen=host:port` or `LISTEN`: the host and port where TLSproxy will listen (defaults to 0.0.0.0:443)
 - `-backend=http://host:port` or `-backend=host:port` or `BACKEND`: the address of the backend to forward to (defaults to localhost:80 for TCP proxying) 

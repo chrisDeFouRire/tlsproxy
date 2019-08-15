@@ -23,7 +23,7 @@ func main() {
 
 	log.SetFlags(log.LUTC | log.LstdFlags)
 
-	var hostname = flag.String("hostname", os.Getenv("HOSTNAME"), "hostname for TLS certificate")
+	var whitelist = flag.String("whitelist", os.Getenv("WHITELIST"), "whitelist of comma separated host names for TLS certificates")
 	var email = flag.String("email", os.Getenv("EMAIL"), "email for let's encrypt account")
 	var listen = flag.String("listen", os.Getenv("LISTEN"), "address to listen to")
 	var backend = flag.String("backend", os.Getenv("BACKEND"), "address to send traffic to")
@@ -61,8 +61,9 @@ func main() {
 	}
 
 	var hostPolicy autocert.HostPolicy
-	if *hostname != "" {
-		hostPolicy = autocert.HostWhitelist(*hostname)
+	if *whitelist != "" {
+		hostnames := strings.Split(*whitelist, ",")
+		hostPolicy = autocert.HostWhitelist(hostnames...)
 	}
 
 	certManager := autocert.Manager{

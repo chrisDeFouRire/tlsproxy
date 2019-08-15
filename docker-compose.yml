@@ -1,0 +1,23 @@
+version: '3'
+
+services:
+  tlsproxy:
+    build: .
+    ports:
+      - "443:443"
+    environment:
+      - WHITELIST=code.sslping.com
+      - EMAIL=chris@chris-hartwig.com
+      - BACKEND=https://sandbox-api01.clanofthecloud.mobi/
+      - HTTP=true
+      - HAR=true
+    volumes:
+      - certs-volume:/root/certs
+    depends_on:
+      - web
+
+  web:
+    image: "nginx"
+
+volumes:
+  certs-volume:
