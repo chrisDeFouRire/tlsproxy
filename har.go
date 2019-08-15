@@ -13,8 +13,8 @@ import (
 )
 
 const (
-	startingEntrySize = 1000
-	captureContent    = false
+	startingEntrySize = 128
+	captureContent    = true
 )
 
 // ResponseWriterProxy is a proxy to intercept http.ResponseWriter method calls
