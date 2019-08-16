@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"compress/flate"
 	"compress/gzip"
 	"io/ioutil"
 	"log"
@@ -53,10 +54,14 @@ func (rwp *ResponseWriterProxy) GetResponse() *HarResponse {
 	rwp.response.Content = &HarContent{}
 
 	encoding := rwp.under.Header()["Content-Encoding"]
-	if encoding != nil && len(encoding) > 0 {
+	if len(encoding) > 0 {
 		rwp.response.Content.Encoding = encoding[0]
 		if encoding[0] == "gzip" {
 			gr, _ := gzip.NewReader(&rwp.buffer)
+			defer gr.Close()
+			bs, _ = ioutil.ReadAll(gr)
+		} else if encoding[0] == "deflate" {
+			gr := flate.NewReader(&rwp.buffer)
 			defer gr.Close()
 			bs, _ = ioutil.ReadAll(gr)
 		}
@@ -193,7 +198,7 @@ func parseRequest(req *http.Request) *HarRequest {
 		HeadersSize: calcHeaderSize(req.Header),
 	}
 
-	if captureContent && (req.Method == "POST" || req.Method == "PUT") {
+	if captureContent && (req.Method == http.MethodPost || req.Method != http.MethodPut) {
 		harRequest.PostData = parsePostData(req)
 	}
 
@@ -238,7 +243,19 @@ func parsePostData(req *http.Request) *HarPostData {
 		}
 		harPostData.Params = params
 	} else {
-		str, _ := ioutil.ReadAll(req.Body)
+		str, _ := ioutil.ReadAll(req.Body) // read body
+		req.Body = ioutil.NopCloser(bytes.NewReader(str)) // put it back in place
+
+		encoding := req.Header.Get("Content-encoding")
+		if encoding == "gzip" {
+			gr, _ := gzip.NewReader(bytes.NewReader(str))
+			defer gr.Close()
+			str, _ = ioutil.ReadAll(gr)
+		} else if encoding == "deflate" {
+			gr := flate.NewReader(bytes.NewReader(str))
+			defer gr.Close()
+			str, _ = ioutil.ReadAll(gr)
+		}
 		harPostData.Text = string(str)
 	}
 	return harPostData

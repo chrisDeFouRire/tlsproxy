@@ -150,7 +150,7 @@ func main() {
 			wp := NewResponseWriterProxy(w)
 
 			proxy.ServeHTTP(wp, r)
-
+		
 			end := time.Now()
 			harRes := wp.GetResponse()
 			harEntry.Request = harReq

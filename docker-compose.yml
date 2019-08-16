@@ -8,7 +8,7 @@ services:
     environment:
       - WHITELIST=code.sslping.com
       - EMAIL=chris@chris-hartwig.com
-      - BACKEND=https://sandbox-api01.clanofthecloud.mobi/
+      - BACKEND=http://web:80
       - HTTP=true
       - HAR=true
     volumes:
@@ -17,7 +17,9 @@ services:
       - web
 
   web:
-    image: "nginx"
-
+    image: "mendhak/http-https-echo"
+    ports:
+      - "9099:80"
+      
 volumes:
   certs-volume:
