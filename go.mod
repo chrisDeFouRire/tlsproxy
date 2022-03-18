@@ -1,13 +1,13 @@
 module github.com/chrisDeFouRire/tlsproxy
 
-go 1.12
+go 1.16
 
 require (
-	golang.org/x/crypto v0.0.0-20191202143827-86a70503ff7e
-	golang.org/x/net v0.0.0-20191126235420-ef20fe5d7933 // indirect
-	golang.org/x/sync v0.0.0-20190911185100-cd5d95a43a6e // indirect
-	golang.org/x/sys v0.0.0-20191128015809-6d18c012aee9 // indirect
-	golang.org/x/text v0.3.2 // indirect
-	golang.org/x/tools v0.0.0-20191203051722-db047d72ee39 // indirect
-	golang.org/x/xerrors v0.0.0-20191011141410-1b5146add898 // indirect
+	golang.org/x/crypto v0.0.0-20220315160706-3147a52a75dd
+	golang.org/x/net v0.0.0-20220225172249-27dd8689420f // indirect
+	golang.org/x/sync v0.0.0-20210220032951-036812b2e83c // indirect
+	golang.org/x/sys v0.0.0-20220318055525-2edf467146b5 // indirect
+	golang.org/x/text v0.3.7 // indirect
+	golang.org/x/tools v0.1.10 // indirect
+	golang.org/x/xerrors v0.0.0-20200804184101-5ec99f83aff1 // indirect
 )
