@@ -1,14 +1,16 @@
-FROM golang:1.16 as builder
-ENV GO111MODULE=on
+# syntax=docker/dockerfile:1
+FROM --platform=$BUILDPLATFORM golang:1.27.1 AS builder
+ARG TARGETOS TARGETARCH
 WORKDIR /app
-COPY go.mod .
-COPY go.sum .
+COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
-RUN GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o tlsproxy
+RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -trimpath -ldflags="-s -w" -o tlsproxy
 
-FROM alpine:3.7
-RUN apk update && apk add ca-certificates && rm -rf /var/cache/apk/*
+FROM alpine:3
+RUN apk add --no-cache ca-certificates
 WORKDIR /root
 COPY --from=builder /app/tlsproxy .
+EXPOSE 443
+# certificates are cached in /root/certs, mount a volume there to keep them
 CMD ["/root/tlsproxy"]

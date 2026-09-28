@@ -4,25 +4,113 @@ import (
 	"bytes"
 	"compress/flate"
 	"compress/gzip"
-	"io/ioutil"
+	"compress/zlib"
+	"encoding/base64"
+	"encoding/json"
+	"io"
 	"log"
 	"net"
 	"net/http"
+	"net/http/httptrace"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
+	"unicode/utf8"
 )
 
 const (
-	startingEntrySize = 128
-	captureContent    = true
+	harDownloadPath = "/downloadharfile"
+	// oldest entries are dropped past this many, to bound memory usage
+	maxHarEntries = 10000
 )
+
+// harRecorder keeps a HAR log of the requests going through the proxy.
+// It is safe for concurrent use.
+type harRecorder struct {
+	mu  sync.Mutex
+	log *HarLog
+}
+
+func newHarRecorder() *harRecorder {
+	return &harRecorder{log: newHarLog()}
+}
+
+func (h *harRecorder) addEntry(entry HarEntry) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if len(h.log.Entries) >= maxHarEntries {
+		h.log.Entries = append(h.log.Entries[:0], h.log.Entries[len(h.log.Entries)-maxHarEntries+1:]...)
+	}
+	h.log.Entries = append(h.log.Entries, entry)
+}
+
+// reset returns the current log and starts a new one.
+func (h *harRecorder) reset() *HarLog {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	l := h.log
+	h.log = newHarLog()
+	return l
+}
+
+// handler wraps next, recording every request, and serves the HAR file on
+// GET /downloadharfile.
+func (h *harRecorder) handler(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && r.URL.Path == harDownloadPath {
+			w.Header().Set("Content-Type", "application/json")
+			w.Header().Set("Content-Disposition", "attachment; filename=\"tlsproxy.har\"")
+			w.Header().Set("Cache-Control", "no-store")
+			if err := json.NewEncoder(w).Encode(Har{HarLog: *h.reset()}); err != nil {
+				log.Print("Writing HAR file failed: ", err)
+			}
+			return
+		}
+
+		var (
+			ipMu     sync.Mutex
+			serverIP string
+		)
+		trace := &httptrace.ClientTrace{
+			GotConn: func(info httptrace.GotConnInfo) {
+				if host, _, err := net.SplitHostPort(info.Conn.RemoteAddr().String()); err == nil {
+					ipMu.Lock()
+					serverIP = host
+					ipMu.Unlock()
+				}
+			},
+		}
+		r = r.WithContext(httptrace.WithClientTrace(r.Context(), trace))
+
+		start := time.Now()
+		harReq := parseRequest(r)
+		wp := NewResponseWriterProxy(w)
+
+		next.ServeHTTP(wp, r)
+
+		elapsed := time.Since(start).Milliseconds()
+		ipMu.Lock()
+		ip := serverIP
+		ipMu.Unlock()
+		h.addEntry(HarEntry{
+			StartedDateTime: start,
+			Time:            elapsed,
+			Request:         harReq,
+			Response:        wp.GetResponse(r.Proto),
+			Cache:           HarCache{},
+			Timings:         HarTimings{Blocked: -1, DNS: -1, Connect: -1, Ssl: -1, Wait: elapsed},
+			ServerIPAddress: ip,
+		})
+	})
+}
 
 // ResponseWriterProxy is a proxy to intercept http.ResponseWriter method calls
 type ResponseWriterProxy struct {
-	under    http.ResponseWriter
-	response HarResponse
-	buffer   bytes.Buffer
+	under       http.ResponseWriter
+	response    HarResponse
+	buffer      bytes.Buffer
+	wroteHeader bool
 }
 
 // NewResponseWriterProxy creates a new ResponseWriterProxy
@@ -35,68 +123,94 @@ func (rwp *ResponseWriterProxy) Header() http.Header {
 	return rwp.under.Header()
 }
 
-// Wrote from from http.ResponseWriter interface
+// Write from http.ResponseWriter interface
 func (rwp *ResponseWriterProxy) Write(bs []byte) (int, error) {
+	if !rwp.wroteHeader {
+		rwp.WriteHeader(http.StatusOK)
+	}
 	rwp.buffer.Write(bs)
 	return rwp.under.Write(bs)
 }
 
 // WriteHeader from http.ResponseWriter interface
 func (rwp *ResponseWriterProxy) WriteHeader(statusCode int) {
-	rwp.response.Status = statusCode
-	rwp.response.Headers = parseStringArrMap(rwp.under.Header())
+	if rwp.wroteHeader {
+		return
+	}
+	// informational responses are passed through but not recorded
+	if statusCode >= 200 || statusCode == http.StatusSwitchingProtocols {
+		rwp.wroteHeader = true
+		rwp.response.Status = statusCode
+		rwp.response.StatusText = http.StatusText(statusCode)
+		rwp.response.Headers = parseValues(rwp.under.Header())
+	}
 	rwp.under.WriteHeader(statusCode)
 }
 
+// Unwrap gives http.ResponseController (used by httputil.ReverseProxy for
+// flushing and protocol upgrades) access to the underlying ResponseWriter.
+func (rwp *ResponseWriterProxy) Unwrap() http.ResponseWriter {
+	return rwp.under
+}
+
 // GetResponse returns a HarResponse after the response was written by the handler
-func (rwp *ResponseWriterProxy) GetResponse() *HarResponse {
-	var bs []byte
-	rwp.response.Content = &HarContent{}
+func (rwp *ResponseWriterProxy) GetResponse(proto string) *HarResponse {
+	header := rwp.under.Header()
+	raw := rwp.buffer.Bytes()
+	bs := decodeBody(raw, header.Get("Content-Encoding"))
 
-	encoding := rwp.under.Header()["Content-Encoding"]
-	if len(encoding) > 0 {
-		rwp.response.Content.Encoding = encoding[0]
-		if encoding[0] == "gzip" {
-			gr, _ := gzip.NewReader(&rwp.buffer)
-			defer gr.Close()
-			bs, _ = ioutil.ReadAll(gr)
-		} else if encoding[0] == "deflate" {
-			gr := flate.NewReader(&rwp.buffer)
-			defer gr.Close()
-			bs, _ = ioutil.ReadAll(gr)
-		}
+	mimeType := header.Get("Content-Type")
+	if mimeType == "" {
+		mimeType = "application/octet-stream"
 	}
-	if bs == nil {
-		bs = rwp.buffer.Bytes()
+	content := &HarContent{
+		Size:        int64(len(bs)),
+		Compression: int64(len(bs) - len(raw)),
+		MimeType:    mimeType,
 	}
-	rwp.response.BodySize = int64(len(bs))
-	contentType := rwp.under.Header()["Content-Type"]
-	if contentType == nil {
-		contentType = []string{"text/plain"}
+	if utf8.Valid(bs) {
+		content.Text = string(bs)
+	} else {
+		content.Text = base64.StdEncoding.EncodeToString(bs)
+		content.Encoding = "base64"
 	}
-	rwp.response.Content.MimeType = contentType[0]
-	rwp.response.Content.Text = string(bs)
 
+	rwp.response.HTTPVersion = proto
+	rwp.response.Cookies = parseCookies((&http.Response{Header: header}).Cookies())
+	if rwp.response.Headers == nil {
+		rwp.response.Headers = parseValues(header)
+	}
+	rwp.response.RedirectURL = header.Get("Location")
+	rwp.response.Content = content
+	rwp.response.BodySize = int64(len(raw))
+	rwp.response.HeadersSize = -1
 	return &rwp.response
 }
 
-func fillIPAddress(req *http.Request, harEntry *HarEntry) {
-	host, _, err := net.SplitHostPort(req.URL.Host)
-	if err != nil {
-		host = req.URL.Host
-	}
-	if ip := net.ParseIP(host); ip != nil {
-		harEntry.ServerIPAddress = string(ip)
-	}
-
-	if ipaddr, err := net.LookupIP(host); err == nil {
-		for _, ip := range ipaddr {
-			if ip.To4() != nil {
-				harEntry.ServerIPAddress = ip.String()
-				return
-			}
+// decodeBody undoes gzip or deflate content encoding, returning bs unchanged
+// for any other encoding or if decoding fails.
+func decodeBody(bs []byte, encoding string) []byte {
+	var r io.Reader
+	var err error
+	switch strings.ToLower(strings.TrimSpace(encoding)) {
+	case "gzip", "x-gzip":
+		r, err = gzip.NewReader(bytes.NewReader(bs))
+	case "deflate":
+		// "deflate" is supposed to be zlib wrapped, but some servers send raw deflate
+		if r, err = zlib.NewReader(bytes.NewReader(bs)); err != nil {
+			r, err = flate.NewReader(bytes.NewReader(bs)), nil
 		}
+	default:
+		return bs
 	}
+	if err != nil {
+		return bs
+	}
+	decoded, err := io.ReadAll(r)
+	if err != nil {
+		return bs
+	}
+	return decoded
 }
 
 // Har represents the json HAR file format
@@ -114,40 +228,17 @@ type HarCreator struct {
 type HarLog struct {
 	Version string     `json:"version"`
 	Creator HarCreator `json:"creator"`
-	Browser string     `json:"browser"`
 	Pages   []HarPage  `json:"pages"`
 	Entries []HarEntry `json:"entries"`
 }
 
 func newHarLog() *HarLog {
-	harLog := &HarLog{
+	return &HarLog{
 		Version: "1.2",
-		Creator: HarCreator{Name: "TLSProxy", Version: "2.8"},
-		Browser: "",
-		Pages:   make([]HarPage, 0, 10),
-		Entries: makeNewEntries(),
+		Creator: HarCreator{Name: "TLSProxy", Version: version},
+		Pages:   []HarPage{},
+		Entries: make([]HarEntry, 0, 128),
 	}
-	return harLog
-}
-
-func (harLog *HarLog) addEntry(entry ...HarEntry) {
-	entries := harLog.Entries
-	m := len(entries)
-	n := m + len(entry)
-	if n > cap(entries) { // if necessary, reallocate
-		// allocate double what's needed, for future growth.
-		newEntries := make([]HarEntry, (n+1)*2)
-		copy(newEntries, entries)
-		entries = newEntries
-	}
-	entries = entries[0:n]
-	copy(entries[m:n], entry)
-	harLog.Entries = entries
-	log.Println("Added entry to HAR file", entry[0].Request.URL)
-}
-
-func makeNewEntries() []HarEntry {
-	return make([]HarEntry, 0, startingEntrySize)
 }
 
 // HarPage is a field of HAR files
@@ -160,15 +251,19 @@ type HarPage struct {
 
 // HarEntry is a field of HAR files
 type HarEntry struct {
-	PageRef         string       `json:"pageRef"`
+	PageRef         string       `json:"pageref,omitempty"`
 	StartedDateTime time.Time    `json:"startedDateTime"`
 	Time            int64        `json:"time"`
 	Request         *HarRequest  `json:"request"`
 	Response        *HarResponse `json:"response"`
+	Cache           HarCache     `json:"cache"`
 	Timings         HarTimings   `json:"timings"`
-	ServerIPAddress string       `json:"serverIpAddress"`
-	Connection      string       `json:"connection"`
+	ServerIPAddress string       `json:"serverIPAddress,omitempty"`
+	Connection      string       `json:"connection,omitempty"`
 }
+
+// HarCache is a field of HAR files
+type HarCache struct{}
 
 // HarRequest is a field of HAR files
 type HarRequest struct {
@@ -178,103 +273,72 @@ type HarRequest struct {
 	Cookies     []HarCookie        `json:"cookies"`
 	Headers     []HarNameValuePair `json:"headers"`
 	QueryString []HarNameValuePair `json:"queryString"`
-	PostData    *HarPostData       `json:"postData"`
+	PostData    *HarPostData       `json:"postData,omitempty"`
 	BodySize    int64              `json:"bodySize"`
 	HeadersSize int64              `json:"headersSize"`
 }
 
 func parseRequest(req *http.Request) *HarRequest {
-	if req == nil {
-		return nil
-	}
+	u := url.URL{Scheme: "https", Host: req.Host, Opaque: req.URL.Opaque, Path: req.URL.Path, RawPath: req.URL.RawPath, RawQuery: req.URL.RawQuery}
 	harRequest := HarRequest{
 		Method:      req.Method,
-		URL:         req.URL.String(),
+		URL:         u.String(),
 		HTTPVersion: req.Proto,
 		Cookies:     parseCookies(req.Cookies()),
-		Headers:     parseStringArrMap(req.Header),
-		QueryString: parseStringArrMap((req.URL.Query())),
+		Headers:     parseValues(req.Header),
+		QueryString: parseValues(req.URL.Query()),
 		BodySize:    req.ContentLength,
-		HeadersSize: calcHeaderSize(req.Header),
+		HeadersSize: -1,
 	}
 
-	if captureContent && (req.Method == http.MethodPost || req.Method != http.MethodPut) {
-		harRequest.PostData = parsePostData(req)
+	if req.Body != nil && req.Body != http.NoBody && req.ContentLength != 0 {
+		harRequest.PostData, harRequest.BodySize = parsePostData(req)
 	}
 
 	return &harRequest
 }
 
-func calcHeaderSize(header http.Header) int64 {
-	headerSize := 0
-	for headerName, headerValues := range header {
-		headerSize += len(headerName) + 2
-		for _, v := range headerValues {
-			headerSize += len(v)
-		}
+// parsePostData reads the request body (putting it back in place for the
+// proxy) and returns it along with its size on the wire.
+func parsePostData(req *http.Request) (*HarPostData, int64) {
+	raw, err := io.ReadAll(req.Body)
+	req.Body.Close()
+	req.Body = io.NopCloser(bytes.NewReader(raw))
+	if err != nil {
+		log.Printf("Error reading request body for %v: %v", req.URL, err)
 	}
-	return int64(headerSize)
-}
 
-func parsePostData(req *http.Request) *HarPostData {
-	defer func() {
-		if e := recover(); e != nil {
-			log.Printf("Error parsing request to %v: %v\n", req.URL, e)
-		}
-	}()
-
-	harPostData := new(HarPostData)
-	contentType := req.Header["Content-Type"]
-	if contentType == nil {
-		panic("Missing content type in request")
+	mimeType := req.Header.Get("Content-Type")
+	if mimeType == "" {
+		mimeType = "application/octet-stream"
 	}
-	harPostData.MimeType = contentType[0]
-
-	if len(req.PostForm) > 0 {
-		index := 0
-		params := make([]HarPostDataParam, len(req.PostForm))
-		for k, v := range req.PostForm {
-			param := HarPostDataParam{
-				Name:  k,
-				Value: strings.Join(v, ","),
-			}
-			params[index] = param
-			index++
-		}
-		harPostData.Params = params
+	body := decodeBody(raw, req.Header.Get("Content-Encoding"))
+	postData := &HarPostData{MimeType: mimeType, Params: []HarPostDataParam{}}
+	if utf8.Valid(body) {
+		postData.Text = string(body)
 	} else {
-		str, _ := ioutil.ReadAll(req.Body) // read body
-		req.Body = ioutil.NopCloser(bytes.NewReader(str)) // put it back in place
-
-		encoding := req.Header.Get("Content-encoding")
-		if encoding == "gzip" {
-			gr, _ := gzip.NewReader(bytes.NewReader(str))
-			defer gr.Close()
-			str, _ = ioutil.ReadAll(gr)
-		} else if encoding == "deflate" {
-			gr := flate.NewReader(bytes.NewReader(str))
-			defer gr.Close()
-			str, _ = ioutil.ReadAll(gr)
-		}
-		harPostData.Text = string(str)
+		postData.Text = base64.StdEncoding.EncodeToString(body)
 	}
-	return harPostData
+	if strings.HasPrefix(mimeType, "application/x-www-form-urlencoded") {
+		if values, err := url.ParseQuery(string(body)); err == nil {
+			for k, vs := range values {
+				for _, v := range vs {
+					postData.Params = append(postData.Params, HarPostDataParam{Name: k, Value: v})
+				}
+			}
+		}
+	}
+	return postData, int64(len(raw))
 }
 
-func parseStringArrMap(stringArrMap map[string][]string) []HarNameValuePair {
-	index := 0
-	harQueryString := make([]HarNameValuePair, len(stringArrMap))
-	for k, v := range stringArrMap {
-		escapedKey, _ := url.QueryUnescape(k)
-		escapedValues, _ := url.QueryUnescape(strings.Join(v, ","))
-		harNameValuePair := HarNameValuePair{
-			Name:  escapedKey,
-			Value: escapedValues,
+func parseValues(values map[string][]string) []HarNameValuePair {
+	pairs := make([]HarNameValuePair, 0, len(values))
+	for k, vs := range values {
+		for _, v := range vs {
+			pairs = append(pairs, HarNameValuePair{Name: k, Value: v})
 		}
-		harQueryString[index] = harNameValuePair
-		index++
 	}
-	return harQueryString
+	return pairs
 }
 
 func parseCookies(cookies []*http.Cookie) []HarCookie {
@@ -282,12 +346,14 @@ func parseCookies(cookies []*http.Cookie) []HarCookie {
 	for i, cookie := range cookies {
 		harCookie := HarCookie{
 			Name:     cookie.Name,
-			Domain:   cookie.Domain,
-			Expires:  cookie.Expires,
-			HTTPOnly: cookie.HttpOnly,
-			Path:     cookie.Path,
-			Secure:   cookie.Secure,
 			Value:    cookie.Value,
+			Path:     cookie.Path,
+			Domain:   cookie.Domain,
+			HTTPOnly: cookie.HttpOnly,
+			Secure:   cookie.Secure,
+		}
+		if !cookie.Expires.IsZero() {
+			harCookie.Expires = cookie.Expires.UTC().Format(time.RFC3339)
 		}
 		harCookies[i] = harCookie
 	}
@@ -302,20 +368,20 @@ type HarResponse struct {
 	Cookies     []HarCookie        `json:"cookies"`
 	Headers     []HarNameValuePair `json:"headers"`
 	Content     *HarContent        `json:"content"`
-	RedirectURL string             `json:"redirectUrl"`
+	RedirectURL string             `json:"redirectURL"`
 	BodySize    int64              `json:"bodySize"`
 	HeadersSize int64              `json:"headersSize"`
 }
 
 // HarCookie is a field of HAR files
 type HarCookie struct {
-	Name     string    `json:"name"`
-	Value    string    `json:"value"`
-	Path     string    `json:"path"`
-	Domain   string    `json:"domain"`
-	Expires  time.Time `json:"expires"`
-	HTTPOnly bool      `json:"httpOnly"`
-	Secure   bool      `json:"secure"`
+	Name     string `json:"name"`
+	Value    string `json:"value"`
+	Path     string `json:"path,omitempty"`
+	Domain   string `json:"domain,omitempty"`
+	Expires  string `json:"expires,omitempty"`
+	HTTPOnly bool   `json:"httpOnly"`
+	Secure   bool   `json:"secure"`
 }
 
 // HarNameValuePair is a field of HAR files
@@ -334,18 +400,18 @@ type HarPostData struct {
 // HarPostDataParam is a field of HAR files
 type HarPostDataParam struct {
 	Name        string `json:"name"`
-	Value       string `json:"value"`
-	FileName    string `json:"fileName"`
-	ContentType string `json:"contentType"`
+	Value       string `json:"value,omitempty"`
+	FileName    string `json:"fileName,omitempty"`
+	ContentType string `json:"contentType,omitempty"`
 }
 
 // HarContent is a field of HAR files
 type HarContent struct {
 	Size        int64  `json:"size"`
-	Compression int64  `json:"compression"`
+	Compression int64  `json:"compression,omitempty"`
 	MimeType    string `json:"mimeType"`
 	Text        string `json:"text"`
-	Encoding    string `json:"encoding"`
+	Encoding    string `json:"encoding,omitempty"`
 }
 
 // HarPageTimings is a field of HAR files
