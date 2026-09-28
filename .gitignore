@@ -2,3 +2,4 @@ certs
 TLSproxy.*
 TLSProxy
 vendor
+/tlsproxy

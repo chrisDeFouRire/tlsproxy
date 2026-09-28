@@ -1,58 +1,107 @@
 # TLSproxy makes TLS trivial
 
-SSL/TLS is difficult to setup correctly:
+SSL/TLS is difficult to set up correctly:
 
 - SSL/TLS configuration options are too numerous to cite
 - each web server has its own set of options
 - certificates expire and must be renewed (use [SSLPing](https://sslping.com) to remind you)
 - certs cost money
-- it's too hard to obtain a secure TLS configuration (TLS proxy gets you an A with SSLlab's server test)
+- it's too hard to obtain a secure TLS configuration
 
-TLSproxy makes it trivially simple to secure a web server: it has only one option, to provide your email (sent only to Let's Encrypt).
+TLSproxy makes it trivially simple to secure a web server: put it in front of your server, tell it where to forward traffic, and it gets and renews free [Let's Encrypt](https://letsencrypt.org) certificates for you.
 
-TLSproxy intends to solve a basic use-case: when you need to secure a single webserver with support for virtual hosts. In this case, it does wonders.
+TLSproxy intends to solve a basic use case: when you need to secure a single web server with support for virtual hosts. In this case, it does wonders.
 
-# Run with Docker
+## What you get
 
-It's easy to run TLSproxy in docker!
+- Certificates obtained and renewed automatically from Let's Encrypt (TLS-ALPN-01 challenge, on port 443 only, nothing is needed on port 80). ECDSA certificates for modern clients, RSA for older ones.
+- TLS 1.3, and TLS 1.2 with forward secret AEAD cipher suites only (`-mintls=1.3` to disable TLS 1.2).
+- Post-quantum key exchange: the hybrid `X25519MLKEM768`, `SecP256r1MLKEM768` and `SecP384r1MLKEM1024` groups are offered and preferred, with `X25519`, `P-256` and `P-384` for clients that don't support them yet.
+- HTTP/2 to clients in HTTP mode.
+- Two modes:
+  - **TCP mode** (default): the decrypted stream is forwarded as is to `host:port`, optionally with a [PROXY protocol](https://www.haproxy.org/download/2.8/doc/proxy-protocol.txt) v1 header so the backend knows the client's IP address.
+  - **HTTP mode** (`-http=true`): TLSproxy is a reverse proxy to an `http://` or `https://` URL. The `Host` header is kept, and `X-Forwarded-For`, `X-Forwarded-Host` and `X-Forwarded-Proto` are set.
 
-`docker pull tlsproxy/tlsproxy` will pull the image from the official repository.
+## Run with Docker
 
-Now run Docker alongside the container you want to protect with TLS...
+Build the image:
 
-**Example with nginx:**
 ```
-docker run -d --name mynginx -p 0.0.0.0:80:80 nginx
-docker run -d --name tlsmynginx -e EMAIL=youremail@a-domain.com -e BACKEND=http://mynginx:80 -p 0.0.0.0:443:443 -e PROXY=true tlsproxy/tlsproxy
+docker build -t tlsproxy .
 ```
 
-This will run a tlsproxy container which will forward TCP requests to the `mynginx` container... Env variables (BACKEND HTTP and EMAIL) are used to tell tlsproxy what should be proxied and how...
+Then run it alongside the container you want to protect with TLS. The DNS records for your hostnames must point to the Docker host, and port 443 must be reachable from the internet so Let's Encrypt can validate them.
 
-If you want your LetsEncrypt certs stored on the host instead of inside the container (highly recommended), just add a `-v /anyfolder/certs:/go/src/app/certs` to map the volume used to store certs on the host. Using a volume helps update tlsproxy without deleting every cert already obtained through LetsEncrypt (beware of LE rate limits).
+**Example with nginx, in HTTP mode:**
 
-# Binaries
+```
+docker network create web
+docker run -d --name mynginx --network web nginx
+docker run -d --name tlsmynginx --network web -p 443:443 \
+  -e WHITELIST=www.example.com \
+  -e EMAIL=you@example.com \
+  -e HTTP=true \
+  -e BACKEND=http://mynginx:80 \
+  -v /anyfolder/certs:/root/certs \
+  tlsproxy
+```
 
-You'll have to build TLSproxy yourself from the Go source code: I do recommend using Docker if you can.
+**Same thing in TCP mode, with the PROXY protocol:**
 
-### Options
+```
+docker run -d --name tlsmynginx --network web -p 443:443 \
+  -e WHITELIST=www.example.com \
+  -e BACKEND=mynginx:80 \
+  -e PROXY=true \
+  -v /anyfolder/certs:/root/certs \
+  tlsproxy
+```
 
-You can use flags or environment variables...
+With `PROXY=true`, the backend must expect the PROXY protocol (for nginx, `listen 80 proxy_protocol;`), or it will reject the connections.
 
-- `-whitelist=<host>` or `WHITELIST`: a comma separated list of hostnames used for the tls certificate (if omitted, the server will guess which tls cert it should acquire... which may fail or be abused)
-- `-email=<email>` or `EMAIL`: the email to use when registering new certs with LetsEncrypt
-- `-listen=host:port` or `LISTEN`: the host and port where TLSproxy will listen (defaults to 0.0.0.0:443)
-- `-backend=http://host:port` or `-backend=host:port` or `BACKEND`: the address of the backend to forward to (defaults to localhost:80 for TCP proxying) 
-- `-http=true` or `HTTP=true`: set to true to use HTTP proxying instead of TCP proxying (defaults to false)
-- `-proxy=true` or `PROXY=true`: set to true to allow TCP proxying with the PROXY protocol
-- `-har=true` or `HAR=true`: when true, TLSProxy will keep track of all requests until you call `GET /downloadharfile`. It will return a JSON HTTP Archive (HAR)file which can be opened with Chrome Dev tools to inspect each request. This is very useful, but for development only
+Certificates are stored in `/root/certs` inside the container. Keep them on a volume, as in the examples above (highly recommended): you can then update TLSproxy without requesting every certificate again from Let's Encrypt, which has [rate limits](https://letsencrypt.org/docs/rate-limits/).
 
-# Roadmap
+A `docker-compose.yml` is included as an example of HTTP mode with HAR recording, in front of an echo server.
+
+## Build from source
+
+TLSproxy needs Go 1.27.1 or later:
+
+```
+go build -o tlsproxy .
+./tlsproxy -whitelist=www.example.com -http=true -backend=http://localhost:8080
+```
+
+It must be reachable on port 443 from the internet for Let's Encrypt to validate your hostnames. If it listens on another port, forward port 443 to it.
+
+## Options
+
+You can use flags or environment variables:
+
+| Flag | Variable | Description |
+| --- | --- | --- |
+| `-backend` | `BACKEND` | **Required.** Where to forward traffic: `host:port` in TCP mode, `http://host:port/path` or `https://...` in HTTP mode. |
+| `-whitelist` | `WHITELIST` | Comma separated list of hostnames to get certificates for. Strongly recommended: if omitted, TLSproxy requests a certificate for any hostname a client asks for, which can be abused to exhaust your Let's Encrypt rate limits. |
+| `-email` | `EMAIL` | Optional contact email for your Let's Encrypt account. |
+| `-listen` | `LISTEN` | Address to listen on. Defaults to `0.0.0.0:443`. |
+| `-http` | `HTTP` | `true` for HTTP proxying instead of TCP proxying. Defaults to `false`. |
+| `-proxy` | `PROXY` | `true` to send a PROXY protocol v1 header to the backend (TCP mode only). Defaults to `false`. |
+| `-mintls` | `MINTLS` | Minimum TLS version, `1.2` or `1.3`. Defaults to `1.2`. |
+| `-certs` | `CERTS` | Directory where certificates are cached. Defaults to `certs`, in the working directory. |
+| `-har` | `HAR` | `true` to record every request and response in HTTP mode, until you call `GET /downloadharfile`. This returns a JSON HTTP Archive (HAR) file, which you can open in your browser's dev tools to inspect each request. Anyone can download it, and it holds full bodies and cookies in memory: for development only. |
+| `-debug` | `DEBUG` | `true` for more verbose logs about certificates. |
+
+Boolean variables accept `true`, `1`, `false`, `0`, etc.
+
+TLSproxy shuts down gracefully on `SIGINT` and `SIGTERM`.
+
+## Roadmap
 
 Next on the roadmap:
 
-- use store for shared certificates (Redis? other?)
+- use a store for shared certificates (Redis? other?)
 
-# License etc.
+## License etc.
 
 You can do whatever you want with TLSproxy but you must assume full responsibility, ie. I'm not liable.
 
